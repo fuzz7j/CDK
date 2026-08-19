@@ -16,7 +16,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@v4
         with:
           go-version: 1.22.2
 
@@ -31,30 +31,32 @@ jobs:
           set -x
           sudo apt-get update
           sudo apt-get install -y upx file curl
-          
+
           export CGO_ENABLED=0
-          # Standard way to fetch pure 40-character commit hash
+          # 完整 40 位 commit hash，用于注入版本号
           export GIT_COMMIT=$(git rev-parse HEAD)
-          
-          # FIXED: Cleaned up escaping for static linking flags and Go string variables
-          export LDFLAGS="-s -w -extldflags '-static' -X ://github.com{GIT_COMMIT}"
-          
+
+          # -X 必须写成 importpath.name=value 形式：
+          #   变量定义于 pkg/cli/banner.go -> var GitCommit string
+          # 注意 _static 链接仅适用于 Linux；macOS 请勿加 -extldflags
+          export LDFLAGS="-s -w -extldflags=-static -X github.com/cdk-team/CDK/pkg/cli.GitCommit=${GIT_COMMIT}"
+
           mkdir -p bin
-          
+
           echo "Building standard versions..."
-          # macOS binaries cannot be linked statically with -extldflags "-static". We pass a standard flag here.
-          GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w -X ://github.com{GIT_COMMIT}" -o bin/cdk_darwin_amd64 ./cmd/cdk/ || echo "Darwin build skipped/failed"
-          
+          # macOS 二进制无法用 -extldflags=-static 静态链接，这里单独处理
+          GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w -X github.com/cdk-team/CDK/pkg/cli.GitCommit=${GIT_COMMIT}" -o bin/cdk_darwin_amd64 ./cmd/cdk/ || echo "Darwin build skipped/failed"
+
           GOOS=linux GOARCH=386 go build -ldflags="$LDFLAGS" -o bin/cdk_linux_386 ./cmd/cdk/
           GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o bin/cdk_linux_amd64 ./cmd/cdk/
           GOOS=linux GOARCH=arm go build -ldflags="$LDFLAGS" -o bin/cdk_linux_arm ./cmd/cdk/
           GOOS=linux GOARCH=arm64 go build -ldflags="$LDFLAGS" -o bin/cdk_linux_arm64 ./cmd/cdk/
-          
+
           echo "Building thin versions..."
           GOOS=linux GOARCH=386 go build -ldflags="$LDFLAGS" -tags="thin" -o bin/cdk_linux_386_thin ./cmd/cdk/
           GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -tags="thin" -o bin/cdk_linux_amd64_thin ./cmd/cdk/
           GOOS=linux GOARCH=arm64 go build -ldflags="$LDFLAGS" -tags="thin" -o bin/cdk_linux_arm64_thin ./cmd/cdk/
-          
+
           echo "Creating UPX compressed versions..."
           for file in bin/cdk_linux_{386,amd64}{,_thin}; do
             if [ -f "$file" ]; then
@@ -77,8 +79,8 @@ jobs:
           name: "Automatic Release (${{ steps.vars.outputs.sha_short }})" # 页面标题
           body: |
             ### 🛠️ 自动构建触发
-            本次 Release 由提交 [${{ steps.vars.outputs.sha_short }}](https://github.com{{ github.repository }}/commit/${{ github.sha }}) 自动触发。
-            
+            本次 Release 由提交 [${{ steps.vars.outputs.sha_short }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) 自动触发。
+
             **提交信息:**
             ${{ github.event.head_commit.message }}
           files: bin/*
