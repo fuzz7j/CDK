@@ -7,8 +7,8 @@ on:
   workflow_dispatch: # 保留手动触发按钮
 
 jobs:
-  release:
-    name: Build and Release
+  build:
+    name: Build binaries
     runs-on: ubuntu-latest
 
     steps:
@@ -66,28 +66,17 @@ jobs:
           done
 
 
-      # 2. 获取当前 Commit 的短哈希作为 Release 的标识
-      - name: Set Release Tag
-        id: vars
-        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+      # 2. 生成 sha256 校验文件，方便下载后核对
+      - name: Generate checksums
+        run: |
+          cd bin && shasum -a 256 * > SHA256SUMS.txt
 
-      # 3. 自动创建或覆盖 Release 页面，并上传编译文件
-      - name: Create or Update Automatic Release
-        uses: softprops/action-gh-release@v2
+      # 3. 上传编译产物为 Artifact（在 workflow run 页面展示并可下载）
+      #    overwrite: true 使每次 commit 的新产物覆盖旧的，页面只保留最新一份
+      - name: Upload binaries as Artifact
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: "release-${{ steps.vars.outputs.sha_short }}" # 每次提交生成的唯一 Tag
-          name: "Automatic Release (${{ steps.vars.outputs.sha_short }})" # 页面标题
-          body: |
-            ### 🛠️ 自动构建触发
-            本次 Release 由提交 [${{ steps.vars.outputs.sha_short }}](https://github.com/${{ github.repository }}/commit/${{ github.sha }}) 自动触发。
-
-            **提交信息:**
-            ${{ github.event.head_commit.message }}
-          files: bin/*
-          prerelease: true # 设为预发布，避免污染正式的生产版本
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # 4. 执行原有的 changelog 脚本
-      - name: Renew Changelog
-        run: bash ".github/workflows/changelog.sh"
+          name: cdk-binaries
+          path: bin/*
+          overwrite: true
+          if-no-files-found: error
