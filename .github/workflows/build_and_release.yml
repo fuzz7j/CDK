@@ -31,20 +31,30 @@ jobs:
           set -x
           sudo apt-get update
           sudo apt-get install -y upx file curl
+          
           export CGO_ENABLED=0
-          export GIT_COMMIT=$(git rev-list -1 HEAD)
-          export ldflags="-s -w -extldflags \"-static\" -X ://github.com"
+          # Standard way to fetch pure 40-character commit hash
+          export GIT_COMMIT=$(git rev-parse HEAD)
+          
+          # FIXED: Cleaned up escaping for static linking flags and Go string variables
+          export LDFLAGS="-s -w -extldflags '-static' -X ://github.com{GIT_COMMIT}"
+          
           mkdir -p bin
+          
           echo "Building standard versions..."
-          GOOS=darwin GOARCH=amd64 go build -ldflags="$ldflags" -o bin/cdk_darwin_amd64 ./cmd/cdk/ || echo "Darwin build failed"
-          GOOS=linux GOARCH=386 go build -ldflags="$ldflags" -o bin/cdk_linux_386 ./cmd/cdk/
-          GOOS=linux GOARCH=amd64 go build -ldflags="$ldflags" -o bin/cdk_linux_amd64 ./cmd/cdk/
-          GOOS=linux GOARCH=arm go build -ldflags="$ldflags" -o bin/cdk_linux_arm ./cmd/cdk/
-          GOOS=linux GOARCH=arm64 go build -ldflags="$ldflags" -o bin/cdk_linux_arm64 ./cmd/cdk/
+          # macOS binaries cannot be linked statically with -extldflags "-static". We pass a standard flag here.
+          GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w -X ://github.com{GIT_COMMIT}" -o bin/cdk_darwin_amd64 ./cmd/cdk/ || echo "Darwin build skipped/failed"
+          
+          GOOS=linux GOARCH=386 go build -ldflags="$LDFLAGS" -o bin/cdk_linux_386 ./cmd/cdk/
+          GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o bin/cdk_linux_amd64 ./cmd/cdk/
+          GOOS=linux GOARCH=arm go build -ldflags="$LDFLAGS" -o bin/cdk_linux_arm ./cmd/cdk/
+          GOOS=linux GOARCH=arm64 go build -ldflags="$LDFLAGS" -o bin/cdk_linux_arm64 ./cmd/cdk/
+          
           echo "Building thin versions..."
-          GOOS=linux GOARCH=386 go build -ldflags="$ldflags" -tags="thin" -o bin/cdk_linux_386_thin ./cmd/cdk/
-          GOOS=linux GOARCH=amd64 go build -ldflags="$ldflags" -tags="thin" -o bin/cdk_linux_amd64_thin ./cmd/cdk/
-          GOOS=linux GOARCH=arm64 go build -ldflags="$ldflags" -tags="thin" -o bin/cdk_linux_arm64_thin ./cmd/cdk/
+          GOOS=linux GOARCH=386 go build -ldflags="$LDFLAGS" -tags="thin" -o bin/cdk_linux_386_thin ./cmd/cdk/
+          GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -tags="thin" -o bin/cdk_linux_amd64_thin ./cmd/cdk/
+          GOOS=linux GOARCH=arm64 go build -ldflags="$LDFLAGS" -tags="thin" -o bin/cdk_linux_arm64_thin ./cmd/cdk/
+          
           echo "Creating UPX compressed versions..."
           for file in bin/cdk_linux_{386,amd64}{,_thin}; do
             if [ -f "$file" ]; then
@@ -52,6 +62,7 @@ jobs:
               upx "${file}_upx" || echo "UPX compression failed for ${file}"
             fi
           done
+
 
       # 2. 获取当前 Commit 的短哈希作为 Release 的标识
       - name: Set Release Tag
