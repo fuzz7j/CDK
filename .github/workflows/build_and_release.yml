@@ -1,12 +1,12 @@
 name: CDK CI
 
 on:
-  workflow_dispatch:
-  release:
-      types: [released, prereleased]
+  push:
+    branches:
+      - main # 或者改为您的默认分支名（例如 master）
+  workflow_dispatch: # 保留手动触发按钮
 
 jobs:
-
   release:
     name: Build and Release
     runs-on: ubuntu-latest
@@ -15,47 +15,36 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - uses: actions/setup-go@v7
         with:
           go-version: 1.22.2
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
 
-
-      - uses: actions/download-artifact@v4
-      - name: Upload Release and Renew Changelog
-        env:
-          UPLOAD_URL: ${{ github.event.release.upload_url }}
-          API_HEADER: "Accept: application/vnd.github.v3+json"
-          AUTH_HEADER: "Authorization: token ${{ secrets.GITHUB_TOKEN }}"
-          RELEASE_URL: ${{ github.event.release.url }}
-
+      # 1. 编译各平台二进制文件
+      - name: Build binaries
         run: |
           set -euo pipefail
           set -x
-
           sudo apt-get update
           sudo apt-get install -y upx file curl
-
           export CGO_ENABLED=0
           export GIT_COMMIT=$(git rev-list -1 HEAD)
-          export ldflags="-s -w -extldflags \"-static\" -X github.com/cdk-team/CDK/pkg/cli.GitCommit=$GIT_COMMIT"
-
+          export ldflags="-s -w -extldflags \"-static\" -X ://github.com"
           mkdir -p bin
-
           echo "Building standard versions..."
           GOOS=darwin GOARCH=amd64 go build -ldflags="$ldflags" -o bin/cdk_darwin_amd64 ./cmd/cdk/ || echo "Darwin build failed"
           GOOS=linux GOARCH=386 go build -ldflags="$ldflags" -o bin/cdk_linux_386 ./cmd/cdk/
           GOOS=linux GOARCH=amd64 go build -ldflags="$ldflags" -o bin/cdk_linux_amd64 ./cmd/cdk/
           GOOS=linux GOARCH=arm go build -ldflags="$ldflags" -o bin/cdk_linux_arm ./cmd/cdk/
           GOOS=linux GOARCH=arm64 go build -ldflags="$ldflags" -o bin/cdk_linux_arm64 ./cmd/cdk/
-
           echo "Building thin versions..."
           GOOS=linux GOARCH=386 go build -ldflags="$ldflags" -tags="thin" -o bin/cdk_linux_386_thin ./cmd/cdk/
           GOOS=linux GOARCH=amd64 go build -ldflags="$ldflags" -tags="thin" -o bin/cdk_linux_amd64_thin ./cmd/cdk/
           GOOS=linux GOARCH=arm64 go build -ldflags="$ldflags" -tags="thin" -o bin/cdk_linux_arm64_thin ./cmd/cdk/
-
           echo "Creating UPX compressed versions..."
           for file in bin/cdk_linux_{386,amd64}{,_thin}; do
             if [ -f "$file" ]; then
@@ -64,27 +53,28 @@ jobs:
             fi
           done
 
-          UPLOAD_URL=$(echo -n $UPLOAD_URL | sed s/\{.*//g)
+      # 2. 获取当前 Commit 的短哈希作为 Release 的标识
+      - name: Set Release Tag
+        id: vars
+        run: echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
 
-          echo "Uploading files..."
+      # 3. 自动创建或覆盖 Release 页面，并上传编译文件
+      - name: Create or Update Automatic Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "release-${{ steps.vars.outputs.sha_short }}" # 每次提交生成的唯一 Tag
+          name: "Automatic Release (${{ steps.vars.outputs.sha_short }})" # 页面标题
+          body: |
+            ### 🛠️ 自动构建触发
+            本次 Release 由提交 [${{ steps.vars.outputs.sha_short }}](https://github.com{{ github.repository }}/commit/${{ github.sha }}) 自动触发。
+            
+            **提交信息:**
+            ${{ github.event.head_commit.message }}
+          files: bin/*
+          prerelease: true # 设为预发布，避免污染正式的生产版本
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-          for FILE in bin/*; do
-            if [ -f "$FILE" ]; then
-              echo "Uploading ${FILE}"
-              MIME_TYPE=$(file -b --mime-type "${FILE}")
-              RESPONSE=$(curl -w "%{http_code}" \
-                -H "${API_HEADER}" \
-                -H "${AUTH_HEADER}" \
-                -H "Content-Type: ${MIME_TYPE}" \
-                --data-binary "@${FILE}" \
-                "${UPLOAD_URL}?name=$(basename ${FILE})" \
-                -o /dev/null)
-              
-              if [ "$RESPONSE" -ne 201 ]; then
-                echo "Error uploading ${FILE}, status code: ${RESPONSE}"
-              fi
-            fi
-          done
-
-          bash ".github/workflows/changelog.sh"
-
+      # 4. 执行原有的 changelog 脚本
+      - name: Renew Changelog
+        run: bash ".github/workflows/changelog.sh"
